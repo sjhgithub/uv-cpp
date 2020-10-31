@@ -16,12 +16,14 @@ CycleBuffer::CycleBuffer()
     :writeIndex_(0),
     readIndex_(0)
 {
-    buffer_ = new uint8_t[GlobalConfig::GlobalConfig::CycleBufferSize];
+    curSize_ = GlobalConfig::CycleBufferSize;
+    buffer_ = (uint8_t*)malloc(curSize_);// new uint8_t[curSize_];
 }
 
 CycleBuffer::~CycleBuffer()
 {
-    delete[] buffer_;
+    //delete[] buffer_;
+    free(buffer_);
 }
 
 
@@ -30,10 +32,23 @@ int CycleBuffer::append(const char* data, uint64_t size)
     SizeInfo info;
     usableSizeInfo(info);
 
-    if (info.size < size)
+    while (info.size < size)
     {
-        //缓存不够
-        return -1;
+        //缓存上限?
+        //if (curSize_ > GlobalConfig::CycleBufferSize * 10) {
+            //return -1;
+        //}
+        _ASSERT(curSize_ == _msize(buffer_));
+        uint64_t addSize = GlobalConfig::CycleBufferSize + GlobalConfig::CycleBufferSize * ((size - info.size) / GlobalConfig::CycleBufferSize);
+        uint8_t* bufferT = (uint8_t*)realloc(buffer_, curSize_ + addSize);
+        if (bufferT != nullptr) {
+            buffer_ = bufferT;
+            curSize_ += addSize;
+            usableSizeInfo(info);
+        }
+        else {
+            return -1;
+        }
     }
     if (info.part1 >= size)
     {
@@ -49,38 +64,60 @@ int CycleBuffer::append(const char* data, uint64_t size)
 
 }
 
-int CycleBuffer::readBufferN(std::string& data, uint64_t N)
+int CycleBuffer::readBufferN(std::string& data, uint64_t N, int64_t P)
 {
     SizeInfo info;
     readSizeInfo(info);
-    if (N > readSize())
+    uint64_t T = P + N;//total bytes from readIndex_
+    if (T > info.size)
     {
         return -1;
     }
+    uint64_t readIndex_part2 = 0;
+    SizeInfo infoRead;
+    infoRead.size = N;
+    infoRead.part1 = std::min(T, info.part1);
+    if (infoRead.part1 > P) {
+        infoRead.part1 = infoRead.part1 - P;
+    }
+    else {
+        readIndex_part2 = P - infoRead.part1;
+        infoRead.part1 = 0;
+    }
+    infoRead.part2 = N - infoRead.part1;
     int start = (int)data.size();
     data.resize(start + N);
     //string被resize空间，所以操作指针安全
     char* out = const_cast<char*>(data.c_str());
     out += start;
-    if (N <= info.part1)
+    if (infoRead.part1 > 0) {
+        std::copy(buffer_ + readIndex_ + P, buffer_ + readIndex_ + (P + infoRead.part1), out);
+    }
+    if (infoRead.part2 > 0) {
+        std::copy(buffer_ + readIndex_part2, buffer_ + readIndex_part2 + infoRead.part2, out + infoRead.part1);
+    }
+    /*if ((P + N) <= info.part1)
     {
-        std::copy(buffer_ + readIndex_, buffer_ + readIndex_ + N, out);
+        std::copy(buffer_ + readIndex_ + P, buffer_ + readIndex_ + (P + N), out);
     }
     else
     {
-        std::copy(buffer_ + readIndex_, buffer_ + GlobalConfig::CycleBufferSize, out);
-        uint64_t remain = N - info.part1;
+        std::copy(buffer_ + readIndex_ + P, buffer_ + curSize_, out);
+        uint64_t remain = (P + N) - info.part1;
         std::copy(buffer_, buffer_ + remain, out + info.part1);
-    }
+    }*/
 
     return 0;
 }
 
-int CycleBuffer::clearBufferN(uint64_t N)
+int CycleBuffer::clearBufferN(uint64_t N, int64_t P)
 {
-    if(N>readSize())
+    N += P;
+    SizeInfo info;
+    readSizeInfo(info);
+    if(N > info.size)
     {
-        N =readSize();
+        N = info.size;
     }
     addReadIndex(N);
     return 0;
@@ -102,7 +139,7 @@ uint64_t CycleBuffer::usableSize()
     }
     else
     {
-        usable = GlobalConfig::CycleBufferSize + readIndex_- writeIndex_-1;
+        usable = curSize_ + readIndex_- writeIndex_-1;
     }
     return usable;
 }
@@ -117,7 +154,7 @@ void CycleBuffer::usableSizeInfo(SizeInfo& info)
     else
     {
         bool readIsZore = (0 == readIndex_);
-        info.part1 = readIsZore ? GlobalConfig::CycleBufferSize - writeIndex_-1: GlobalConfig::CycleBufferSize - writeIndex_;
+        info.part1 = readIsZore ? curSize_ - writeIndex_-1: curSize_ - writeIndex_;
         info.part2 = readIsZore ? 0 : readIndex_ - 1;
     }
     info.size = info.part1 + info.part2;
@@ -139,7 +176,7 @@ void CycleBuffer::readSizeInfo(SizeInfo& info)
     }
     else
     {
-        info.part1 = GlobalConfig::CycleBufferSize - readIndex_;
+        info.part1 = curSize_ - readIndex_;
         info.part2 = writeIndex_;
     }
     info.size = info.part1 + info.part2;
@@ -147,20 +184,20 @@ void CycleBuffer::readSizeInfo(SizeInfo& info)
 
 int CycleBuffer::addWriteIndex(uint64_t size)
 {
-    if (size > GlobalConfig::CycleBufferSize)
+    if (size > curSize_)
         return -1;
     writeIndex_ += size;
-    if (writeIndex_ >= GlobalConfig::CycleBufferSize)
-        writeIndex_ -= GlobalConfig::CycleBufferSize;
+    if (writeIndex_ >= curSize_)
+        writeIndex_ -= curSize_;
     return 0;
 }
 
 int CycleBuffer::addReadIndex(uint64_t size)
 {
-    if (size > GlobalConfig::CycleBufferSize)
+    if (size > curSize_)
         return -1;
     readIndex_ += size;
-    if (readIndex_ >= GlobalConfig::CycleBufferSize)
-        readIndex_ -= GlobalConfig::CycleBufferSize;
+    if (readIndex_ >= curSize_)
+        readIndex_ -= curSize_;
     return 0;
 }

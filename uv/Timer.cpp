@@ -13,19 +13,22 @@
 using namespace uv;
 
 Timer::Timer(EventLoop * loop, uint64_t timeout, uint64_t repeat, TimerCallback callback)
-    :started_(false),
+    :that_(new that(this)),
+    loop_(loop),
+    started_(false),
     handle_(new uv_timer_t),
     timeout_(timeout),
     repeat_(repeat),
-    callback_(callback),
-    closeComplete_(nullptr)
+    callback_(callback)
 {
-    handle_->data = static_cast<void*>(this);
+    handle_->data = static_cast<void*>(that_);
     ::uv_timer_init(loop->handle(), handle_);
 }
 
 Timer::~Timer()
 {
+    that_->setWillGoner();
+    close(nullptr);
 }
 
 void Timer::start()
@@ -39,6 +42,7 @@ void Timer::start()
 
 void Timer::close(TimerCloseComplete callback)
 {
+    callback_ = nullptr;
     closeComplete_ = callback;
     if (uv_is_active((uv_handle_t*)handle_))
     {
@@ -48,15 +52,28 @@ void Timer::close(TimerCloseComplete callback)
     {
         ::uv_close((uv_handle_t*)handle_,
             [](uv_handle_t* handle)
-        {
-            auto ptr = static_cast<Timer*>(handle->data);
-            ptr->closeComplete();
-            delete handle;
-        });
+            {
+                that* that_ = static_cast<that*>(handle->data);
+                if (that_->getWillGoner()) {
+                    delete that_;
+                    delete handle;
+                }
+                else {
+                    auto ptrTimer = static_cast<Timer*>(that_->body());
+                    if (ptrTimer->closeComplete_) {
+                        ptrTimer->closeComplete_(ptrTimer);
+                    }
+                    that_->rtnWillGoner();
+                }
+            });
+        //投递一个通知,催促尽快处理
+        PostQueuedCompletionStatus(loop_->handle()->iocp, 0, 0, NULL);
     }
     else
     {
-        closeComplete();
+        if (callback) {
+            callback(this);
+        }
     }
 }
 
@@ -76,16 +93,14 @@ void Timer::onTimeOut()
     }
 }
 
-void Timer::closeComplete()
-{
-    if (closeComplete_)
-        closeComplete_(this);
-}
-
 void Timer::process(uv_timer_t * handle)
 {
-    auto ptr = static_cast<Timer*>(handle->data);
-    ptr->onTimeOut();
+    that* that_ = static_cast<that*>(handle->data);
+    if (!that_->getWillGoner()) {
+        auto ptrTimer = static_cast<Timer*>(that_->body());
+        ptrTimer->onTimeOut();
+        that_->rtnWillGoner();
+    }
 }
 
 

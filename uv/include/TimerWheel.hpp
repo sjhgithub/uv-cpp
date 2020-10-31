@@ -28,17 +28,20 @@ class TimerWheel
 public:
     TimerWheel(EventLoop* loop);
     TimerWheel(EventLoop* loop,unsigned int timeout);
+    ~TimerWheel();
     void setTimeout(unsigned int seconds);
     int getTimeout();
     void start();
     void insert(std::shared_ptr<Type> value);
     
 private:
+    //that* that_;
     unsigned int index_;
     unsigned int timeoutSec_;
     Timer timer_;
 
     std::vector<std::set<std::shared_ptr<Type>>> wheel_;
+    std::mutex muxWheel_;
 
     void wheelCallback();
 
@@ -53,11 +56,21 @@ inline TimerWheel<Type>::TimerWheel(EventLoop* loop)
 
 template<typename Type>
 inline TimerWheel<Type>::TimerWheel(EventLoop* loop, unsigned int timeout)
+    //:that_(new that(this)),
     :index_(0),
     timeoutSec_(timeout),
     timer_(loop, 1000, 1000, std::bind(&TimerWheel::wheelCallback, this))
 {
+}
 
+template<typename Type>
+inline TimerWheel<Type>::~TimerWheel()
+{
+    //that_->setWillGoner();
+    timer_.close(nullptr);
+    std::unique_lock<std::mutex> lockWheel(muxWheel_);
+    //使用swap清空vector会析构指针
+    std::vector<std::set<std::shared_ptr<Type>>>().swap(wheel_);
 }
 
 template<typename Type>
@@ -71,6 +84,7 @@ inline void TimerWheel<Type>::start()
 {
     if (timeoutSec_)
     {
+        std::unique_lock<std::mutex> lockWheel(muxWheel_);
         wheel_.resize(timeoutSec_);
         timer_.start();
     }
@@ -81,6 +95,7 @@ inline void TimerWheel<Type>::insert(std::shared_ptr<Type> value)
 {
     if (timeoutSec_ > 0 && nullptr != value)
     {
+        std::unique_lock<std::mutex> lockWheel(muxWheel_);
         wheel_[index_].insert(value);
     }
 }
@@ -100,6 +115,7 @@ inline void TimerWheel<Type>::wheelCallback()
     {
         index_ = 0;
     }
+    std::unique_lock<std::mutex> lockWheel(muxWheel_);
     wheel_[index_].clear();
 }
 }

@@ -20,7 +20,7 @@
 namespace uv
 {
 
-using NewConnectionCallback  =    std::function<void(EventLoop* ,UVTcpPtr)> ;
+using NewConnectionCallback  =    std::function<void(EventLoop* , uv_tcp_t*)> ;
 
 class TcpAccepter
 {
@@ -40,14 +40,16 @@ public:
     
 
 private:
+    that* that_;
     bool listened_;
     bool tcpNoDelay_;
     EventLoop* loop_;
     NewConnectionCallback callback_;
-    DefaultCallback onCloseCompletCallback_;
-    uv_tcp_t server_;
+	DefaultCallback onCloseCompletCallback_;
 
-    void onNewConnect(UVTcpPtr client);
+    uv_tcp_t* server_;
+
+    void onNewConnect(uv_tcp_t* client);
     void onCloseComlet();
 };
 

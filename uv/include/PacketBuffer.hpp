@@ -29,8 +29,8 @@ public:
     virtual ~PacketBuffer(){}
 
     virtual int append(const char* data, uint64_t size) = 0;
-    virtual int readBufferN(std::string& data, uint64_t N) = 0;
-    virtual int clearBufferN(uint64_t N) = 0;
+    virtual int readBufferN(std::string& data, uint64_t N, int64_t P = 0) = 0;
+    virtual int clearBufferN(uint64_t N, int64_t P = 0) = 0;
     virtual int clear() = 0;
     virtual uint64_t readSize() = 0;
 

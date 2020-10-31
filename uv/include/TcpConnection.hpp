@@ -50,7 +50,7 @@ using CloseCompleteCallback =  std::function<void (std::string&)>  ;
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 {
 public :
-    TcpConnection(EventLoop* loop,std::string& name,UVTcpPtr client,bool isConnected = true);
+    TcpConnection(EventLoop* loop, std::string& name, uv_tcp_t* client, bool isConnected = true, bool bAutoStartReading = true);
     virtual ~TcpConnection();
     
     void onSocketClose();
@@ -71,6 +71,13 @@ public :
     const std::string& Name();
 
     PacketBufferPtr getPacketBuffer();
+public:
+    bool m_bAutoStartReading;
+    void* userdata;
+    void* parent;//Point to TcpServer or TcpClient;
+    void SetName(std::string&);
+    void startReading();
+    void setDbgRawMesageReceive(bool b = true) { dbgRawMesageReceive_ = b; }
 private:
     void onMessage(const char* buf, ssize_t size);
     void CloseComplete();
@@ -78,17 +85,28 @@ private:
     static void  onMesageReceive(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf);
     
 private :
+    that* that_;
     std::string name_;
     bool connected_;
     EventLoop* loop_;
-    UVTcpPtr handle_;
+    uv_tcp_t* handle_;
     std::string data_;
     PacketBufferPtr buffer_;
     std::weak_ptr<ConnectionWrapper> wrapper_;
+    FILE* fpDbgLogger_ = nullptr;
+    bool dbgRawMesageReceive_ = false;
 
     OnMessageCallback onMessageCallback_;
     OnCloseCallback onConnectCloseCallback_;
     CloseCompleteCallback closeCompleteCallback_;
+
+    typedef struct goneCallbackPara
+    {
+        std::function<void(std::string&)> callback;
+        std::string name;
+    }GONECALLBACKPARA;
+    GONECALLBACKPARA* goneCallbackPara_;
+
 };
 
 class  ConnectionWrapper : public std::enable_shared_from_this<ConnectionWrapper>

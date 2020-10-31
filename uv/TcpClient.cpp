@@ -18,21 +18,37 @@ using namespace uv;
 using namespace std;
 
 
-TcpClient::TcpClient(EventLoop* loop, bool tcpNoDelay)
-    :loop_(loop),
+TcpClient::TcpClient(EventLoop* loop, bool tcpNoDelay, bool bAutoStartReading)
+    :that_(new that(this)),
+    loop_(loop),
     connect_(new uv_connect_t()),
     ipv(SocketAddr::Ipv4),
     tcpNoDelay_(tcpNoDelay),
     connectCallback_(nullptr),
     onMessageCallback_(nullptr),
-    connection_(nullptr)
+    connection_(nullptr),
+    m_bAutoStartReading(bAutoStartReading)
 {
-    connect_->data = static_cast<void*>(this);
+    connect_->data = static_cast<void*>(that_);
+    //20200404 by song
+    //由于端口转发软件创建TcpClient对象时需要取得TcpConnection对象句柄
+    //所以由原来的建立连接时创建改为构造时创建
+    update();//新建socket_句柄
+    string name = "";
+    connection_ = make_shared<TcpConnection>(loop_, name, socket_, false, m_bAutoStartReading);
+    connection_->parent = this;
 }
 
 TcpClient::~TcpClient()
 {
-    delete connect_;
+    that_->setWillGoner();
+    that_->setGoneCallback(connect_,
+        [](void* hpara, void* lpara) -> int {
+            uv_connect_t* connect_ = (uv_connect_t*)hpara;
+            delete connect_;
+            return 1;
+        });
+    close(nullptr);
 }
 
 bool uv::TcpClient::isTcpNoDelay()
@@ -45,23 +61,34 @@ void uv::TcpClient::setTcpNoDelay(bool isNoDelay)
     tcpNoDelay_ = isNoDelay;
 }
 
-
+void TcpClient::StartReading()
+{
+    if (connection_)
+    {
+        connection_->startReading();
+    }
+}
 void TcpClient::connect(SocketAddr& addr)
 {
-    update();
+    //update();
     ipv = addr.Ipv();    
-    ::uv_tcp_connect(connect_, socket_.get(), addr.Addr(), [](uv_connect_t* req, int status)
-    {
-        auto handle = static_cast<TcpClient*>((req->data));
-        if (0 != status)
+    ::uv_tcp_connect(connect_, socket_, addr.Addr(),
+        [](uv_connect_t* req, int status)
         {
-            uv::LogWriter::Instance()->error( "connect fail.");
-            handle->onConnect(false);
-            return;
-        }
-
-        handle->onConnect(true);
-    });
+            that* that_ = static_cast<that*>(req->data);
+            if (!that_->getWillGoner()) {
+                auto handle = static_cast<TcpClient*>((that_->body()));
+                if (0 != status)
+                {
+                    uv::LogWriter::Instance()->error("connect fail.");
+                    handle->onConnect(false);
+                }
+                else {
+                    handle->onConnect(true);
+                }
+                that_->rtnWillGoner();
+            }
+        });
 }
 
 void TcpClient::onConnect(bool successed)
@@ -69,27 +96,34 @@ void TcpClient::onConnect(bool successed)
     if(successed)
     {
         string name;
-        SocketAddr::AddrToStr(socket_.get(),name,ipv);
+        SocketAddr::AddrToStr(socket_,name,ipv);
 
-        connection_ = make_shared<TcpConnection>(loop_, name, socket_);
+        //建立连接时,指定必要的参数
+        connection_->setConnectStatus(true);
+        connection_->SetName(name);
+        //connection_ = make_shared<TcpConnection>(loop_, name, socket_);
         connection_->setMessageCallback(std::bind(&TcpClient::onMessage,this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3));
         connection_->setConnectCloseCallback(std::bind(&TcpClient::onConnectClose,this,std::placeholders::_1));
         runConnectCallback(TcpClient::OnConnectSuccess);
     }
     else
     {
-        if (::uv_is_active((uv_handle_t*)socket_.get()))
+        if (::uv_is_active((uv_handle_t*)socket_))
         {
-            ::uv_read_stop((uv_stream_t*)socket_.get());
+            ::uv_read_stop((uv_stream_t*)socket_);
         }
-        if (::uv_is_closing((uv_handle_t*)socket_.get()) == 0)
+        if (::uv_is_closing((uv_handle_t*)socket_) == 0)
         {
-            socket_->data = static_cast<void*>(this);
-            ::uv_close((uv_handle_t*)socket_.get(),
+            socket_->data = static_cast<void*>(that_);
+            ::uv_close((uv_handle_t*)socket_,
                 [](uv_handle_t* handle)
             {
-                auto client = static_cast<TcpClient*>(handle->data);
-                client->afterConnectFail();
+                that* that_ = static_cast<that*>(handle->data);
+                if (!that_->getWillGoner()) {
+                    auto client = static_cast<TcpClient*>(that_->body());
+                    client->afterConnectFail();
+                    that_->rtnWillGoner();
+                }
             });
         }
     }
@@ -112,12 +146,22 @@ void uv::TcpClient::close(std::function<void(uv::TcpClient*)> callback)
 {
     if (connection_)
     {
-        connection_->close([this, callback](std::string&)
-        {
-            //onClose(name);
-            if (callback)
-                callback(this);
-        });
+        that* that__ = that_;
+        connection_->close([that__, callback](std::string& name)
+            {
+                if (that__->getWillGoner()) {
+                    if (that__->onGoneCallback()) {
+                        delete that__;
+                    }
+                }else{
+                    //onClose(name);
+                    if (callback) {
+                        auto client = static_cast<TcpClient*>(that__->body());
+                        callback(client);
+                    }
+                    that__->rtnWillGoner();
+                }
+            });
 
     }
     else if(callback)
@@ -175,6 +219,11 @@ EventLoop* uv::TcpClient::Loop()
     return loop_;
 }
 
+TcpConnectionPtr uv::TcpClient::getTcpConnectionPtr()
+{
+    return connection_;
+}
+
 PacketBufferPtr uv::TcpClient::getCurrentBuf()
 {
     if (connection_)
@@ -185,10 +234,10 @@ PacketBufferPtr uv::TcpClient::getCurrentBuf()
 
 void TcpClient::update()
 {
-    socket_ = make_shared<uv_tcp_t>();
-    ::uv_tcp_init(loop_->handle(), socket_.get());
+    socket_ = new uv_tcp_t;
+    ::uv_tcp_init(loop_->handle(), socket_);
     if (tcpNoDelay_)
-        ::uv_tcp_nodelay(socket_.get(), 1 );
+        ::uv_tcp_nodelay(socket_, 1 );
 }
 
 void uv::TcpClient::runConnectCallback(TcpClient::ConnectStatus satus)

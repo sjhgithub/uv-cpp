@@ -15,10 +15,13 @@
 #include <thread>
 #include <atomic>
 #include <functional>
+#include "ResurPoint.h"
 
 namespace uv
 {
 using DefaultCallback = std::function<void()>;
+class EventLoop;
+using EventLoopPtr = std::shared_ptr<uv::EventLoop>;
 
 class Async;
 class EventLoop
@@ -35,32 +38,43 @@ public:
         Runed,
         Stop
     };
+    EventLoop(Mode mode);
     EventLoop();
     ~EventLoop();
 
     static EventLoop* DefaultLoop();
+    static EventLoopPtr DefaultLoopPtr();
 
+    HANDLE runInNewThread(const DefaultCallback onExit = nullptr);
+    void close(bool bWaitForExit = true);
     int run();
     int runNoWait();
     int stop();
     bool isStoped();
     Status getStatus();
+    std::thread::id getLoopThreadId() { return loopThreadId_; }
     bool isRunInLoopThread();
-    void runInThisLoop(const DefaultCallback func);
+    bool isRunInDefaultLoop();
+    //Calling onCall function from this loop thread, and Call onClose function When call close();
+    //When onCall is "Blocked function", it must exit when call close.
+    void runInThisLoop(const DefaultCallback onCall, const DefaultCallback onClose = nullptr);
     uv_loop_t* handle();
 
     static const char* GetErrorMessage(int status);
+    DefaultCallback getExitRunThreadCallback();
+    DefaultCallback getCloseRunThreadCallback();
 
 private:
-    EventLoop(Mode mode);
 
     std::thread::id loopThreadId_;
     uv_loop_t* loop_;
     Async* async_;
     std::atomic<Status> status_;
+    HANDLE loopThreadHandle_;
+    DefaultCallback onExitRunThreadCallback;
+    DefaultCallback onCloseRunThreadCallback;
+    bool runInDefaultLoop;
 };
-
-using EventLoopPtr = std::shared_ptr<uv::EventLoop>;
 }
 #endif
 

@@ -36,9 +36,9 @@ public:
     ~ListBuffer();
  
     int append(const char* data, uint64_t size) override;
-    int readBufferN(std::string& data, uint64_t N) override;
+    int readBufferN(std::string& data, uint64_t N, int64_t P = 0) override;
     uint64_t readSize() override;
-    int clearBufferN(uint64_t N) override;
+    int clearBufferN(uint64_t N, int64_t P = 0) override;
     int clear() override;
 
 private:

@@ -32,13 +32,14 @@ public:
     };
     using ConnectStatusCallback = std::function<void(ConnectStatus)>;
 public:
-    TcpClient(EventLoop* loop,bool tcpNoDelay = true);
+    TcpClient(EventLoop* loop,bool tcpNoDelay = true, bool bAutoStartReading = true);
     virtual ~TcpClient();
 
     bool isTcpNoDelay();
     void setTcpNoDelay(bool isNoDelay);
     void connect(SocketAddr& addr);
     void close(std::function<void(uv::TcpClient*)> callback);
+    void StartReading();
 
     void write(const char* buf, unsigned int size, AfterWriteCallback callback = nullptr);
     void writeInLoop(const char* buf, unsigned int size, AfterWriteCallback callback);
@@ -48,6 +49,7 @@ public:
 
     EventLoop* Loop();
     PacketBufferPtr getCurrentBuf();
+    TcpConnectionPtr getTcpConnectionPtr();
 protected:
     EventLoop* loop_;
 
@@ -56,10 +58,12 @@ protected:
     void onMessage(TcpConnectionPtr connection, const char* buf, ssize_t size);
     void afterConnectFail();
 private:
-    UVTcpPtr socket_;
+    that* that_;
+    uv_tcp_t* socket_;
     uv_connect_t* connect_;
     SocketAddr::IPV ipv;
     bool tcpNoDelay_;
+    bool m_bAutoStartReading;
 
     ConnectStatusCallback connectCallback_;
     NewMessageCallback onMessageCallback_;

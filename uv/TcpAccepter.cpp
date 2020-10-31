@@ -15,23 +15,26 @@ using namespace std;
 using namespace uv;
 
 TcpAccepter::TcpAccepter(EventLoop* loop, bool tcpNoDelay)
-    :listened_(false),
+    :that_(new that(this)),
+    listened_(false),
     tcpNoDelay_(tcpNoDelay),
     loop_(loop),
     callback_(nullptr),
-    onCloseCompletCallback_(nullptr)
+    onCloseCompletCallback_(nullptr),
+    server_(new uv_tcp_t)
 {
-    ::uv_tcp_init(loop_->handle(), &server_);
+    ::uv_tcp_init(loop_->handle(), server_);
     if (tcpNoDelay_)
-        ::uv_tcp_nodelay(&server_, 1);
-    server_.data = (void* )this;
+        ::uv_tcp_nodelay(server_, 1);
+    server_->data = (void*)that_;
 }
 
 
 
 TcpAccepter:: ~TcpAccepter()
 {
-
+    that_->setWillGoner();
+    close(nullptr);
 }
 
 EventLoop* TcpAccepter::Loop()
@@ -39,11 +42,11 @@ EventLoop* TcpAccepter::Loop()
     return loop_;
 }
 
-void TcpAccepter::onNewConnect(UVTcpPtr client)
+void TcpAccepter::onNewConnect(uv_tcp_t* client)
 {
-    if(nullptr !=callback_)
+    if (nullptr != callback_)
     {
-        callback_(loop_,client);
+        callback_(loop_, client);
     }
 }
 
@@ -55,12 +58,12 @@ void uv::TcpAccepter::onCloseComlet()
 
 int uv::TcpAccepter::bind(SocketAddr& addr)
 {
-    return ::uv_tcp_bind(&server_, addr.Addr(), 0);
+    return ::uv_tcp_bind(server_, addr.Addr(), 0);
 }
 
 int TcpAccepter::listen()
 {
-    auto rst = ::uv_listen((uv_stream_t*) &server_, 128,
+    auto rst = ::uv_listen((uv_stream_t * )server_, 128,
     [](uv_stream_t *server, int status)
     {
         if (status < 0)
@@ -68,19 +71,23 @@ int TcpAccepter::listen()
             uv::LogWriter::Instance()->error (std::string("New connection error :")+ EventLoop::GetErrorMessage(status));
             return;
         }
-        TcpAccepter* accept = static_cast<TcpAccepter*>(server->data);
-        UVTcpPtr client = make_shared<uv_tcp_t>();
-        ::uv_tcp_init(accept->Loop()->handle(), client.get());
-        if (accept->isTcpNoDelay())
-            ::uv_tcp_nodelay(client.get(), 1);
+        that* that_ = static_cast<that*>(server->data);
+        if (!that_->getWillGoner()) {
+            TcpAccepter* accept = static_cast<TcpAccepter*>(that_->body());
+            uv_tcp_t* client = new uv_tcp_t;
+            ::uv_tcp_init(accept->Loop()->handle(), client);
+            if (accept->isTcpNoDelay())
+                ::uv_tcp_nodelay(client, 1);
 
-        if ( 0 == ::uv_accept(server, (uv_stream_t*) client.get()))
-        {
-            accept->onNewConnect(client);
-        }
-        else
-        {
-            ::uv_close((uv_handle_t*) client.get(), NULL);
+            if (0 == ::uv_accept(server, (uv_stream_t*)client))
+            {
+                accept->onNewConnect(client);
+            }
+            else
+            {
+                ::uv_close((uv_handle_t*)client, NULL);
+            }
+            that_->rtnWillGoner();
         }
     });
     if (rst == 0)
@@ -99,25 +106,33 @@ bool TcpAccepter::isListen()
 void uv::TcpAccepter::close(DefaultCallback callback)
 {
     onCloseCompletCallback_ = callback;
-    auto ptr = &server_;
-    if (::uv_is_active((uv_handle_t*)ptr))
+    if (::uv_is_active((uv_handle_t*)server_))
     {
-        ::uv_read_stop((uv_stream_t*)ptr);
+        ::uv_read_stop((uv_stream_t*)server_);
     }
-    if (::uv_is_closing((uv_handle_t*)ptr) == 0)
+    if (::uv_is_closing((uv_handle_t*)server_) == 0)
     {
         //libuv 在loop轮询中会检测关闭句柄，delete会导致程序异常退出。
-        ::uv_close((uv_handle_t*)ptr,
+        ::uv_close((uv_handle_t*)server_,
             [](uv_handle_t* handle)
-        {
-            auto accept = static_cast<TcpAccepter*>(handle->data);
-            accept->onCloseComlet();
-        });
+            {
+                that* that_ = static_cast<that*>(handle->data);
+                if (that_->getWillGoner()) {
+                    delete that_;
+                    delete handle;
+                }
+                else {
+                    auto accept = static_cast<TcpAccepter*>(that_->body());
+                    accept->onCloseComlet();
+                    that_->rtnWillGoner();
+                }
+            });
     }
     else
     {
         onCloseComlet();
     }
+    listened_ = false;
 }
 
 bool uv::TcpAccepter::isTcpNoDelay()

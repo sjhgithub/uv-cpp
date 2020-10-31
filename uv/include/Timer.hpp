@@ -30,6 +30,8 @@ public:
     void setTimerRepeat(uint64_t ms);
 
 private:
+    that* that_;
+    EventLoop* loop_;
     bool started_;
     uv_timer_t* handle_;
     uint64_t timeout_;
@@ -40,7 +42,6 @@ private:
 
 private:
     void onTimeOut();
-    void closeComplete();
 
     static void process(uv_timer_t* handle);
 

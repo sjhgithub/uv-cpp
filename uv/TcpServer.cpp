@@ -25,21 +25,71 @@ void uv::TcpServer::SetBufferMode(uv::GlobalConfig::BufferMode mode)
     uv::GlobalConfig::BufferModeStatus = mode;
 }
 
-TcpServer::TcpServer(EventLoop* loop, bool tcpNoDelay)
-    :loop_(loop),
+TcpServer::TcpServer(EventLoop* loop, bool tcpNoDelay, bool bAutoStartReading)
+    :that_(new that(this)),
+    loop_(loop),
     tcpNoDelay_(tcpNoDelay),
     accetper_(nullptr),
     onMessageCallback_(nullptr),
     onNewConnectCallback_(nullptr),
     onConnectCloseCallback_(nullptr),
-    timerWheel_(loop)
+    timerWheel_(loop),
+    m_bAutoStartReading(bAutoStartReading)
 {
-
 }
-
 TcpServer:: ~TcpServer()
 {
-
+    that_->setWillGoner();
+    //拒绝接收任何外界接入
+    accetper_->setNewConnectinonCallback(nullptr);
+    //简单的对connnections_进行clear或者swap清空操作,并不能触发TcpConnectionPtr的析构,因为有可能在其他地方也有引用
+    //所以为了完美的释放内存,需要将所有连接复制一份,并调用close进行关闭,然后在回调中清理复制的map
+    muxConnections_.lock();
+    //复制一份连接map
+    typedef struct goneCbPara
+    {
+        std::map<std::string, TcpConnectionPtr> connnections_;
+        OnConnectionStatusCallback onConnectCloseCallback_;
+    };
+    goneCbPara* cbPara = new goneCbPara;
+    cbPara->connnections_ = connnections_;
+    cbPara->onConnectCloseCallback_ = onConnectCloseCallback_;
+    that_->setGoneCallback((void*)cbPara,
+        [](void* hpara, void* lpara) -> int {
+            goneCbPara* cbPara = (goneCbPara*)hpara;
+            int ret = 0;
+            if (cbPara && lpara) {//lpara 指向连接名
+                if (cbPara->connnections_.size() > 0) {
+                    std::string name = (char*)lpara;
+                    auto it = cbPara->connnections_.find(name);
+                    if (it != cbPara->connnections_.end()) {
+                        if (cbPara->onConnectCloseCallback_)
+                        {
+                            cbPara->onConnectCloseCallback_(it->second);
+                        }
+                        cbPara->connnections_.erase(name);
+                    }
+                }
+                if (cbPara->connnections_.size() == 0) {
+                    ret = 1;
+                    delete cbPara;
+                }
+            }
+            else {
+                ret = 1;
+                if (cbPara) {
+                    delete cbPara;
+                }
+            }
+            return ret;
+        });
+    //然后再进行关闭
+    for (map<std::string, TcpConnectionPtr>::iterator it = connnections_.begin(); it != connnections_.end(); it++) {
+        closeConnectionPtr(it->second);
+    }
+    //清理掉
+    connnections_.clear();
+    muxConnections_.unlock();
 }
 
 void TcpServer::setTimeout(unsigned int seconds)
@@ -47,15 +97,16 @@ void TcpServer::setTimeout(unsigned int seconds)
     timerWheel_.setTimeout(seconds);
 }
 
-void uv::TcpServer::onAccept(EventLoop * loop, UVTcpPtr client)
+void uv::TcpServer::onAccept(EventLoop * loop, uv_tcp_t* client)
 {
     string key;
-    SocketAddr::AddrToStr(client.get(), key, ipv_);
+    SocketAddr::AddrToStr(client, key, ipv_);
 
     uv::LogWriter::Instance()->debug("new connect  " + key);
-    shared_ptr<TcpConnection> connection(new TcpConnection(loop, key, client));
+    shared_ptr<TcpConnection> connection(new TcpConnection(loop, key, client, true, m_bAutoStartReading));
     if (connection)
     {
+        connection->parent = this;
         connection->setMessageCallback(std::bind(&TcpServer::onMessage, this, placeholders::_1, placeholders::_2, placeholders::_3));
         connection->setConnectCloseCallback(std::bind(&TcpServer::closeConnection, this, placeholders::_1));
         addConnnection(key, connection);
@@ -103,22 +154,31 @@ void TcpServer::close(DefaultCallback callback)
 
 void TcpServer::addConnnection(std::string& name,TcpConnectionPtr connection)
 {
+    muxConnections_.lock();
     connnections_.insert(pair<string,shared_ptr<TcpConnection>>(std::move(name),connection));
+    muxConnections_.unlock();
 }
 
 void TcpServer::removeConnnection(string& name)
 {
+    muxConnections_.lock();
     connnections_.erase(name);
+    muxConnections_.unlock();
 }
 
 shared_ptr<TcpConnection> TcpServer::getConnnection(const string& name)
 {
+    std::unique_lock<std::mutex> lockConn(muxConnections_);
     auto rst = connnections_.find(name);
-    if(rst == connnections_.end())
-    {
+    if(rst == connnections_.end()) {
         return nullptr;
     }
     return rst->second;
+}
+
+std::map<std::string, TcpConnectionPtr>& TcpServer::getConnnections()
+{
+    return connnections_;
 }
 
 void TcpServer::closeConnection(const string& name)
@@ -126,22 +186,50 @@ void TcpServer::closeConnection(const string& name)
     auto connection = getConnnection(name);
     if (nullptr != connection)
     {
-        connection->close([this](std::string& name)
-        {
-            auto connection = getConnnection(name);
-            if (nullptr != connection)
-            {
-                if (onConnectCloseCallback_)
-                {
-                    onConnectCloseCallback_(connection);
-                }
-                removeConnnection(name);
-            }
-
-        });
+        closeConnectionPtr(connection);
     }
 }
 
+void TcpServer::closeConnectionPtr(TcpConnectionPtr connection)
+{
+	connection->setMessageCallback(nullptr);
+	connection->setConnectCloseCallback(nullptr);
+    that* that__ = that_;
+	connection->close([that__](std::string& name)
+		{
+            if (that__->getWillGoner()) {
+                if (that__->onGoneCallback((void*)name.c_str())) {
+                    delete that__;
+                }
+            }
+            else {
+                TcpServer* server = static_cast<TcpServer*>(that__->body());
+			    auto connection = server->getConnnection(name);
+			    if (nullptr != connection)
+			    {
+				    if (server->onConnectCloseCallback_)
+				    {
+                        server->onConnectCloseCallback_(connection);
+				    }
+                    server->removeConnnection(name);
+			    }
+                that__->rtnWillGoner();
+            }
+		});
+}
+
+void TcpServer::StartReading(TcpConnectionPtr connection)
+{
+    connection->startReading();
+}
+void TcpServer::StartReading(std::string& name)
+{
+    auto connection = getConnnection(name);
+    if (nullptr != connection)
+    {
+        StartReading(connection);
+    }
+}
 
 void TcpServer::onMessage(TcpConnectionPtr connection,const char* buf,ssize_t size)
 {
@@ -165,6 +253,10 @@ void TcpServer::write(shared_ptr<TcpConnection> connection,const char* buf,unsig
     if(nullptr != connection)
     {
         connection->write(buf,size, callback);
+        if (timerWheel_.getTimeout() > 0)
+        {
+            timerWheel_.insert(connection->getWrapper());
+        }
     }
     else if (callback)
     {
@@ -184,6 +276,10 @@ void TcpServer::writeInLoop(shared_ptr<TcpConnection> connection,const char* buf
     if(nullptr != connection)
     {
         connection->writeInLoop(buf,size,callback);
+        if (timerWheel_.getTimeout() > 0)
+        {
+            timerWheel_.insert(connection->getWrapper());
+        }
     }
     else if (callback)
     {
