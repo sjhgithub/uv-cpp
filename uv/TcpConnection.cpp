@@ -119,8 +119,9 @@ void TcpConnection::close(std::function<void(std::string&)> callback)
             {
                 that* that_ = static_cast<that*>(handle->data);
                 if (that_->getWillGoner()) {
+                    that* t = that_;
                     if (that_->onGoneCallback()) {
-                        delete that_;
+                        delete t;
                     }
                 }
                 else {

@@ -198,8 +198,9 @@ void TcpServer::closeConnectionPtr(TcpConnectionPtr connection)
 	connection->close([that__](std::string& name)
 		{
             if (that__->getWillGoner()) {
+                that* t = that__;
                 if (that__->onGoneCallback((void*)name.c_str())) {
-                    delete that__;
+                    delete t;
                 }
             }
             else {

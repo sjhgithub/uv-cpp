@@ -150,8 +150,9 @@ void uv::TcpClient::close(std::function<void(uv::TcpClient*)> callback)
         connection_->close([that__, callback](std::string& name)
             {
                 if (that__->getWillGoner()) {
+                    that* t = that__;
                     if (that__->onGoneCallback()) {
-                        delete that__;
+                        delete t;
                     }
                 }else{
                     //onClose(name);
