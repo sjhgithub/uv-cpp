@@ -68,6 +68,13 @@ void TcpClient::StartReading()
         connection_->startReading();
     }
 }
+void TcpClient::reconnect(SocketAddr& addr)
+{
+    delete socket_;
+    update();
+    connection_->setClient(socket_);
+    connect(addr);
+}
 void TcpClient::connect(SocketAddr& addr)
 {
     //update();

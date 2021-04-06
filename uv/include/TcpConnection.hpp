@@ -78,6 +78,7 @@ public:
     void SetName(std::string&);
     void startReading();
     void setDbgRawMesageReceive(bool b = true) { dbgRawMesageReceive_ = b; }
+    void setClient(uv_tcp_t* client);
 private:
     void onMessage(const char* buf, ssize_t size);
     void CloseComplete();

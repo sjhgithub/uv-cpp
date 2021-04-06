@@ -137,6 +137,15 @@ void TcpConnection::close(std::function<void(std::string&)> callback)
     }
 }
 
+void TcpConnection::setClient(uv_tcp_t* client) {
+    ::uv_read_stop((uv_stream_t*)handle_);
+    handle_ = client;
+    handle_->data = static_cast<void*>(that_);
+    if (m_bAutoStartReading && connected_) {
+        startReading();
+    }
+}
+
 void TcpConnection::startReading()
 {
     ::uv_read_start((uv_stream_t*)handle_,

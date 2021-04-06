@@ -38,6 +38,7 @@ public:
     bool isTcpNoDelay();
     void setTcpNoDelay(bool isNoDelay);
     void connect(SocketAddr& addr);
+    void reconnect(SocketAddr& addr);
     void close(std::function<void(uv::TcpClient*)> callback);
     void StartReading();
 
