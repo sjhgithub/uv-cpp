@@ -96,7 +96,7 @@ void uv::http::HttpServer::onMesage(TcpConnectionPtr conn, const char* data, ssi
                 callback(req, &resp);
                 std::string respData;
                 resp.pack(respData);
-                std::string connName = conn->Name();
+                std::string connName = conn->getName();
                 conn->write(respData.c_str(), respData.size(), [this, connName](WriteInfo&)
                 {
                     closeConnection(connName);

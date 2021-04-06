@@ -78,7 +78,7 @@ void TcpClient::reconnect(SocketAddr& addr)
 void TcpClient::connect(SocketAddr& addr)
 {
     //update();
-    ipv = addr.Ipv();    
+    ipv = addr.Ipv();
     ::uv_tcp_connect(connect_, socket_, addr.Addr(),
         [](uv_connect_t* req, int status)
         {
@@ -107,7 +107,7 @@ void TcpClient::onConnect(bool successed)
 
         //建立连接时,指定必要的参数
         connection_->setConnectStatus(true);
-        connection_->SetName(name);
+        connection_->setName(name);
         //connection_ = make_shared<TcpConnection>(loop_, name, socket_);
         connection_->setMessageCallback(std::bind(&TcpClient::onMessage,this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3));
         connection_->setConnectCloseCallback(std::bind(&TcpClient::onConnectClose,this,std::placeholders::_1));
@@ -244,8 +244,8 @@ void TcpClient::update()
 {
     socket_ = new uv_tcp_t;
     ::uv_tcp_init(loop_->handle(), socket_);
-    if (tcpNoDelay_)
-        ::uv_tcp_nodelay(socket_, 1 );
+    if (tcpNoDelay_) //禁用Nagle算法,允许发送小包数据
+        ::uv_tcp_nodelay(socket_, 1);
 }
 
 void uv::TcpClient::runConnectCallback(TcpClient::ConnectStatus satus)

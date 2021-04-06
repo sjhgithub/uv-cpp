@@ -54,8 +54,10 @@ public :
     virtual ~TcpConnection();
     
     void onSocketClose();
+    //调用uv_close后,该连接会处于FIN_WAIT_1状态,确保数据发送完毕,除非断网或者对端断开
     void close(std::function<void(std::string&)> callback);
 
+    //WSASend will be called with buf's address
     int write(const char* buf,ssize_t size,AfterWriteCallback callback);
     void writeInLoop(const char* buf,ssize_t size,AfterWriteCallback callback);
 
@@ -68,20 +70,22 @@ public :
     void setConnectStatus(bool status);
     bool isConnected();
     
-    const std::string& Name();
+    const std::string& getName();
+    void setName(const std::string&);
 
     PacketBufferPtr getPacketBuffer();
 public:
-    bool m_bAutoStartReading;
+    UINT64 bytesReceived = 0;
+    UINT64 bytesSent = 0;
+    bool autoStartReading;
     void* userdata;
     void* parent;//Point to TcpServer or TcpClient;
-    void SetName(std::string&);
     void startReading();
     void setDbgRawMesageReceive(bool b = true) { dbgRawMesageReceive_ = b; }
     void setClient(uv_tcp_t* client);
 private:
     void onMessage(const char* buf, ssize_t size);
-    void CloseComplete();
+    void closeComplete();
     char* resizeData(size_t size);
     static void  onMesageReceive(uv_stream_t* client, ssize_t nread, const uv_buf_t* buf);
     

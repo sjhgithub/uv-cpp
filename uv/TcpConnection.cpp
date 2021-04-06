@@ -56,13 +56,13 @@ TcpConnection::TcpConnection(EventLoop* loop, std::string& name, uv_tcp_t* clien
     buffer_(nullptr),
     userdata(nullptr),
     parent(nullptr),
-    m_bAutoStartReading(bAutoStartReading),
+    autoStartReading(bAutoStartReading),
     onMessageCallback_(nullptr),
     onConnectCloseCallback_(nullptr),
     closeCompleteCallback_(nullptr)
 {
     handle_->data = static_cast<void*>(that_);
-    if (m_bAutoStartReading && connected_) {
+    if (autoStartReading && connected_) {
         startReading();
     }
     if (GlobalConfig::BufferModeStatus == GlobalConfig::ListBuffer)
@@ -126,14 +126,14 @@ void TcpConnection::close(std::function<void(std::string&)> callback)
                 }
                 else {
                     auto connection = static_cast<TcpConnection*>(that_->body());
-                    connection->CloseComplete();
+                    connection->closeComplete();
                     that_->rtnWillGoner();
                 }
             });
     }
     else
     {
-        CloseComplete();
+        closeComplete();
     }
 }
 
@@ -141,7 +141,7 @@ void TcpConnection::setClient(uv_tcp_t* client) {
     ::uv_read_stop((uv_stream_t*)handle_);
     handle_ = client;
     handle_->data = static_cast<void*>(that_);
-    if (m_bAutoStartReading && connected_) {
+    if (autoStartReading && connected_) {
         startReading();
     }
 }
@@ -169,6 +169,9 @@ void TcpConnection::startReading()
 int TcpConnection::write(const char* buf, ssize_t size, AfterWriteCallback callback)
 {
     int rst;
+    if (size > 0) {
+        bytesSent += size;
+    }
     if (connected_)
     {
         WriteReq* req = new WriteReq;
@@ -266,6 +269,7 @@ void  TcpConnection::onMesageReceive(uv_stream_t* client, ssize_t nread, const u
 	    }
         if (nread > 0)
         {
+            connection->bytesReceived += nread;
 		    if (connection->dbgRawMesageReceive_ && connection->fpDbgLogger_) {
 			    std::fwrite(buf->base, 1, nread, connection->fpDbgLogger_);
 		    }
@@ -319,7 +323,7 @@ void uv::TcpConnection::setConnectCloseCallback(OnCloseCallback callback)
     onConnectCloseCallback_ = callback;
 }
 
-void uv::TcpConnection::CloseComplete()
+void uv::TcpConnection::closeComplete()
 {
     setConnectStatus(false);
     if (closeCompleteCallback_)
@@ -331,7 +335,7 @@ void uv::TcpConnection::CloseComplete()
 void uv::TcpConnection::setConnectStatus(bool status)
 {
     connected_ = status;
-    if (m_bAutoStartReading && connected_) {
+    if (autoStartReading && connected_) {
         startReading();
     }
 }
@@ -341,12 +345,12 @@ bool uv::TcpConnection::isConnected()
     return connected_;
 }
 
-const std::string& uv::TcpConnection::Name()
+const std::string& uv::TcpConnection::getName()
 {
     return name_;
 }
 
-void uv::TcpConnection::SetName(std::string& name)
+void uv::TcpConnection::setName(const std::string& name)
 {
     name_ = name;
 }
